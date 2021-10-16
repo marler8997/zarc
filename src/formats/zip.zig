@@ -26,10 +26,10 @@ pub const CompressionMethod = enum(u16) {
     ppmd_1_1,
     aex_encryption,
 
-    pub fn read(self: *CompressionMethod, reader: anytype) !void {
+    pub fn read(reader: anytype) !CompressionMethod {
         const data = try reader.readIntLittle(u16);
 
-        self.* = @intToEnum(CompressionMethod, data);
+        return @intToEnum(CompressionMethod, data);
     }
 
     pub fn write(self: CompressionMethod, writer: anytype) !void {
@@ -68,12 +68,13 @@ pub const Version = struct {
     major: u8,
     minor: u8,
 
-    pub fn read(self: *Version, reader: anytype) !void {
+    pub fn read(reader: anytype) !Version {
         const data = try reader.readIntLittle(u16);
-
-        self.major = @truncate(u8, data) / 10;
-        self.minor = @truncate(u8, data) % 10;
-        self.vendor = @intToEnum(Vendor, @truncate(u8, data >> 8));
+        return Version {
+            .major = @truncate(u8, data) / 10,
+            .minor = @truncate(u8, data) % 10,
+            .vendor = @intToEnum(Vendor, @truncate(u8, data >> 8)),
+        };
     }
 
     pub fn write(self: Version, writer: anytype) !void {
@@ -101,10 +102,11 @@ pub const GeneralPurposeBitFlag = packed struct {
     __14_reserved: u1,
     __15_reserved: u1,
 
-    pub fn read(self: *GeneralPurposeBitFlag, reader: anytype) !void {
+
+    pub fn read(reader: anytype) !GeneralPurposeBitFlag {
         const data = try reader.readIntLittle(u16);
 
-        self.* = @bitCast(GeneralPurposeBitFlag, data);
+        return @bitCast(GeneralPurposeBitFlag, data);
     }
 
     pub fn write(self: GeneralPurposeBitFlag, writer: anytype) !void {
@@ -121,10 +123,11 @@ pub const InternalAttributes = packed struct {
     __3_7_reserved: u5,
     __8_15_reserved: u8,
 
-    pub fn read(self: *InternalAttributes, reader: anytype) !void {
+
+    pub fn read(reader: anytype) !InternalAttributes {
         const data = try reader.readIntLittle(u16);
 
-        self.* = @bitCast(GeneralPurposeBitFlag, data);
+        return @bitCast(InternalAttributes, data);
     }
 
     pub fn write(self: InternalAttributes, writer: anytype) !void {
@@ -142,18 +145,19 @@ pub const DosTimestamp = struct {
     month: u4,
     year: u12,
 
-    pub fn read(self: *DosTimestamp, reader: anytype) !void {
+
+    pub fn read(reader: anytype) !DosTimestamp {
         const time = try reader.readIntLittle(u16);
-
-        self.second = @as(u6, @truncate(u5, time)) << 1;
-        self.minute = @truncate(u6, time >> 5);
-        self.hour = @truncate(u5, time >> 11);
-
         const date = try reader.readIntLittle(u16);
 
-        self.day = @truncate(u5, date);
-        self.month = @truncate(u4, date >> 5);
-        self.year = @as(u12, @truncate(u7, date >> 9)) + 1980;
+        return DosTimestamp {
+            .second = @as(u6, @truncate(u5, time)) << 1,
+            .minute = @truncate(u6, time >> 5),
+            .hour = @truncate(u5, time >> 11),
+            .day = @truncate(u5, date),
+            .month = @truncate(u4, date >> 5),
+            .year = @as(u12, @truncate(u7, date >> 9)) + 1980,
+        };
     }
 
     pub fn write(self: DosTimestamp, writer: anytype) !void {
@@ -193,64 +197,72 @@ pub const LocalFileHeader = struct {
     offset: usize,
 
     const ReadError = error{ MalformedLocalFileHeader, MultidiskUnsupported };
-    pub fn read(self: *LocalFileHeader, central_header: *const CentralDirectoryHeader, parser: anytype, reader: anytype) !void {
-        try self.version_needed.read(reader);
-        try self.flags.read(reader);
-        try self.compression.read(reader);
-        try self.mtime.read(reader);
+    pub fn read(central_header: *const CentralDirectoryHeader, seeker: anytype, reader: anytype) !LocalFileHeader {
+        const Seek = Seeker(@TypeOf(seeker));
 
-        self.checksum = try reader.readIntLittle(u32);
-        self.compressed_size = try reader.readIntLittle(u32);
-        self.uncompressed_size = try reader.readIntLittle(u32);
+        var result = LocalFileHeader {
+            .version_needed = try Version.read(reader),
+            .flags = try GeneralPurposeBitFlag.read(reader),
+            .compression = try CompressionMethod.read(reader),
+            .mtime = try DosTimestamp.read(reader),
 
-        self.filename_len = try reader.readIntLittle(u16);
-        self.extrafield_len = try reader.readIntLittle(u16);
+            .checksum = try reader.readIntLittle(u32),
+            .compressed_size = try reader.readIntLittle(u32),
+            .uncompressed_size = try reader.readIntLittle(u32),
 
-        self.offset = central_header.offset + 30 + self.filename_len + self.extrafield_len;
+            .filename_len = try reader.readIntLittle(u16),
+            .extrafield_len = try reader.readIntLittle(u16),
 
-        self.central_header = central_header;
+            .offset = undefined,
+            .central_header = undefined,
+            .data_descriptor = undefined,
+        };
 
-        if (self.filename_len != central_header.filename_len) return error.MalformedLocalFileHeader;
-        try parser.bufferedSeekBy(reader.context, @intCast(i64, self.filename_len));
+        result.offset = central_header.offset + 30 + result.filename_len + result.extrafield_len;
+
+        result.central_header = central_header;
+
+        if (result.filename_len != central_header.filename_len) return error.MalformedLocalFileHeader;
+        try Seek.seekBy(seeker, reader.context, @intCast(i64, result.filename_len));
 
         var is_zip64 = false;
         var extra_read: u32 = 0;
 
-        const needs_uncompressed_size = self.uncompressed_size == 0xFFFFFFFF;
-        const needs_compressed_size = self.compressed_size == 0xFFFFFFFF;
+        const needs_uncompressed_size = result.uncompressed_size == 0xFFFFFFFF;
+        const needs_compressed_size = result.compressed_size == 0xFFFFFFFF;
 
         const required_zip64_size = (@as(u5, @boolToInt(needs_uncompressed_size)) + @as(u5, @boolToInt(needs_compressed_size))) * 8;
 
-        while (extra_read < self.extrafield_len) {
+        while (extra_read < result.extrafield_len) {
             const field_id = try reader.readIntLittle(u16);
             const field_size = try reader.readIntLittle(u16);
             extra_read += 4;
 
             if (field_id == 0x0001) {
                 if (field_size < required_zip64_size) return error.MalformedExtraField;
-                if (needs_uncompressed_size) self.uncompressed_size = try reader.readIntLittle(u64);
-                if (needs_compressed_size) self.compressed_size = try reader.readIntLittle(u64);
+                if (needs_uncompressed_size) result.uncompressed_size = try reader.readIntLittle(u64);
+                if (needs_compressed_size) result.compressed_size = try reader.readIntLittle(u64);
 
                 extra_read += required_zip64_size;
 
-                try parser.bufferedSeekBy(reader.context, field_size - required_zip64_size);
+                try Seek.seekBy(seeker, reader.context, field_size - required_zip64_size);
 
                 break;
             } else {
-                try parser.bufferedSeekBy(reader.context, field_size);
+                try Seek.seekBy(seeker, reader.context, field_size);
 
                 extra_read += field_size;
             }
         }
 
-        const left = self.extrafield_len - extra_read;
+        const left = result.extrafield_len - extra_read;
 
-        if (self.flags.data_descriptor) {
-            try parser.bufferedSeekBy(reader.context, @intCast(i64, left + self.compressed_size));
+        if (result.flags.data_descriptor) {
+            try Seek.seekBy(seeker, reader.context, @intCast(i64, left + result.compressed_size));
 
-            self.data_descriptor = @as(DataDescriptor, undefined);
-            try self.data_descriptor.?.read(reader, is_zip64);
+            result.data_descriptor = try DataDescriptor.read(reader, is_zip64);
         }
+        return result;
     }
 };
 
@@ -262,28 +274,36 @@ pub const DataDescriptor = struct {
     compressed_size: u64,
     uncompressed_size: u64,
 
-    pub fn read(self: *DataDescriptor, reader: anytype, zip64: bool) !void {
+    pub fn read(reader: anytype, zip64: bool) !DataDescriptor {
         const signature = try reader.readIntLittle(u32);
         if (signature == DataDescriptor.Signature) {
             if (zip64) {
-                self.checksum = try reader.readIntLittle(u64);
-                self.compressed_size = try reader.readIntLittle(u64);
-                self.uncompressed_size = try reader.readIntLittle(u64);
+                return DataDescriptor {
+                    .checksum = try reader.readIntLittle(u64),
+                    .compressed_size = try reader.readIntLittle(u64),
+                    .uncompressed_size = try reader.readIntLittle(u64),
+                };
             } else {
-                self.checksum = try reader.readIntLittle(u32);
-                self.compressed_size = try reader.readIntLittle(u32);
-                self.uncompressed_size = try reader.readIntLittle(u32);
+                return DataDescriptor {
+                    .checksum = try reader.readIntLittle(u32),
+                    .compressed_size = try reader.readIntLittle(u32),
+                    .uncompressed_size = try reader.readIntLittle(u32),
+                };
             }
         } else {
             if (zip64) {
                 const next_u32 = try reader.readIntLittle(u32);
-                self.checksum = @as(u64, next_u32) << 32 | signature;
-                self.compressed_size = try reader.readIntLittle(u64);
-                self.uncompressed_size = try reader.readIntLittle(u64);
+                return DataDescriptor {
+                    .checksum = @as(u64, next_u32) << 32 | signature,
+                    .compressed_size = try reader.readIntLittle(u64),
+                    .uncompressed_size = try reader.readIntLittle(u64),
+                };
             } else {
-                self.checksum = signature;
-                self.compressed_size = try reader.readIntLittle(u32);
-                self.uncompressed_size = try reader.readIntLittle(u32);
+                return DataDescriptor {
+                    .checksum = signature,
+                    .compressed_size = try reader.readIntLittle(u32),
+                    .uncompressed_size = try reader.readIntLittle(u32),
+                };
             }
         }
     }
@@ -317,37 +337,38 @@ pub const CentralDirectoryHeader = struct {
 
     local_header: LocalFileHeader,
 
-    const ReadInitialError = error{MultidiskUnsupported};
-    pub fn readInitial(self: *CentralDirectoryHeader, parser: anytype, reader: anytype) !void {
-        try self.version_made.read(reader);
-        try self.version_needed.read(reader);
-        try self.flags.read(reader);
-        try self.compression.read(reader);
-        try self.mtime.read(reader);
+    pub fn readInitial(reader: anytype) !CentralDirectoryHeader {
+        return CentralDirectoryHeader {
+            .version_made = try Version.read(reader),
+            .version_needed = try Version.read(reader),
+            .flags = try GeneralPurposeBitFlag.read(reader),
+            .compression = try CompressionMethod.read(reader),
+            .mtime = try DosTimestamp.read(reader),
 
-        self.checksum = try reader.readIntLittle(u32);
-        self.compressed_size = try reader.readIntLittle(u32);
-        self.uncompressed_size = try reader.readIntLittle(u32);
+            .checksum = try reader.readIntLittle(u32),
+            .compressed_size = try reader.readIntLittle(u32),
+            .uncompressed_size = try reader.readIntLittle(u32),
 
-        self.filename_len = try reader.readIntLittle(u16);
-        self.extrafield_len = try reader.readIntLittle(u16);
-        self.file_comment_len = try reader.readIntLittle(u16);
+            .filename_len = try reader.readIntLittle(u16),
+            .extrafield_len = try reader.readIntLittle(u16),
+            .file_comment_len = try reader.readIntLittle(u16),
 
-        self.disk_start = try reader.readIntLittle(u16);
-        try self.internal_attributes.read(reader);
-        self.external_attributes = try reader.readIntLittle(u32);
-        self.offset = try reader.readIntLittle(u32);
+            .disk_start = try reader.readIntLittle(u16),
+            .internal_attributes = try InternalAttributes.read(reader),
+            .external_attributes = try reader.readIntLittle(u32),
+            .offset = try reader.readIntLittle(u32),
 
-        if (self.disk_start != parser.ecd.disk_number) return error.MultidiskUnsupported;
-
-        try parser.bufferedSeekBy(reader.context, @intCast(i64, self.filename_len + self.extrafield_len + self.file_comment_len));
+            .filename = undefined,
+            .local_header = undefined,
+        };
     }
 
-    const ReadSecondaryError = error{MalformedExtraField};
-    pub fn readSecondary(self: *CentralDirectoryHeader, parser: anytype, reader: anytype) !void {
-        try parser.bufferedSeekBy(reader.context, 46);
+    pub const ReadSecondaryError = error{MalformedExtraField};
+    pub fn readSecondary(self: *CentralDirectoryHeader, seeker: anytype, reader: anytype, filename_buffer: *std.ArrayListUnmanaged(u8),) !void {
+        const Seek = Seeker(@TypeOf(seeker));
+        try Seek.seekBy(seeker, reader.context, 46);
 
-        self.filename = try parser.readFilename(reader, self.filename_len);
+        self.filename = try readFilename(filename_buffer, seeker, self.filename_len);
 
         const needs_uncompressed_size = self.uncompressed_size == 0xFFFFFFFF;
         const needs_compressed_size = self.compressed_size == 0xFFFFFFFF;
@@ -374,7 +395,7 @@ pub const CentralDirectoryHeader = struct {
 
                     break;
                 } else {
-                    try parser.bufferedSeekBy(reader.context, field_size);
+                    try Seek.seekBy(seeker, reader.context, field_size);
 
                     read += field_size;
                 }
@@ -382,20 +403,18 @@ pub const CentralDirectoryHeader = struct {
 
             const left = self.extrafield_len - read;
 
-            try parser.bufferedSeekBy(reader.context, @intCast(i64, self.file_comment_len + left));
+            try Seek.seekBy(seeker, reader.context, @intCast(i64, self.file_comment_len + left));
         } else {
-            try parser.bufferedSeekBy(reader.context, @intCast(i64, self.extrafield_len + self.file_comment_len));
+            try Seek.seekBy(seeker, reader.context, @intCast(i64, self.extrafield_len + self.file_comment_len));
         }
     }
 
     const ReadLocalError = LocalFileHeader.ReadError || error{MalformedLocalFileHeader};
-    pub fn readLocal(self: *CentralDirectoryHeader, parser: anytype, reader: anytype) !void {
-        try parser.bufferedSeekTo(reader.context, parser.start_offset + self.offset);
-
+    pub fn readLocal(self: *CentralDirectoryHeader, seeker: anytype, reader: anytype) !void {
         const signature = try reader.readIntLittle(u32);
         if (signature != LocalFileHeader.Signature) return error.MalformedLocalFileHeader;
 
-        try self.local_header.read(self, parser, reader);
+        self.local_header = try LocalFileHeader.read(self, seeker, reader);
     }
 };
 
@@ -416,19 +435,21 @@ pub const EndCentralDirectory64Record = struct {
     directory_size: u64,
     directory_offset: u64,
 
-    pub fn parse(self: *EndCentralDirectory64Record, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.record_size = try reader.readIntLittle(u64);
+    pub fn read(reader: anytype) !EndCentralDirectory64Record {
+        return EndCentralDirectory64Record {
+            .record_size = try reader.readIntLittle(u64),
 
-        try self.version_made.read(reader);
-        try self.version_needed.read(reader);
+            .version_made = try Version.read(reader),
+            .version_needed = try Version.read(reader),
 
-        self.disk_number = try reader.readIntLittle(u32);
-        self.disk_start_directory = try reader.readIntLittle(u32);
-        self.disk_directory_entries = try reader.readIntLittle(u64);
+            .disk_number = try reader.readIntLittle(u32),
+            .disk_start_directory = try reader.readIntLittle(u32),
+            .disk_directory_entries = try reader.readIntLittle(u64),
 
-        self.directory_entry_count = try reader.readIntLittle(u64);
-        self.directory_size = try reader.readIntLittle(u64);
-        self.directory_offset = try reader.readIntLittle(u64);
+            .directory_entry_count = try reader.readIntLittle(u64),
+            .directory_size = try reader.readIntLittle(u64),
+            .directory_offset = try reader.readIntLittle(u64),
+        };
     }
 };
 
@@ -440,10 +461,12 @@ pub const EndCentralDirectory64Locator = struct {
     directory_offset: u64,
     number_of_disks: u32,
 
-    pub fn parse(self: *EndCentralDirectory64Locator, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.directory_disk_number = try reader.readIntLittle(u32);
-        self.directory_offset = try reader.readIntLittle(u64);
-        self.number_of_disks = try reader.readIntLittle(u32);
+    pub fn read(reader: anytype) !EndCentralDirectory64Locator {
+        return EndCentralDirectory64Locator {
+            .directory_disk_number = try reader.readIntLittle(u32),
+            .directory_offset = try reader.readIntLittle(u64),
+            .number_of_disks = try reader.readIntLittle(u32),
+        };
     }
 };
 
@@ -461,321 +484,342 @@ pub const EndCentralDirectoryRecord = struct {
 
     comment_length: u16,
 
-    pub fn parse(self: *EndCentralDirectoryRecord, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.disk_number = try reader.readIntLittle(u16);
-        self.disk_start_directory = try reader.readIntLittle(u16);
-        self.disk_directory_entries = try reader.readIntLittle(u16);
+    pub fn read(reader: anytype) !EndCentralDirectoryRecord {
+        return EndCentralDirectoryRecord {
+            .disk_number = try reader.readIntLittle(u16),
+            .disk_start_directory = try reader.readIntLittle(u16),
+            .disk_directory_entries = try reader.readIntLittle(u16),
 
-        self.directory_entry_count = try reader.readIntLittle(u16);
-        self.directory_size = try reader.readIntLittle(u32);
-        self.directory_offset = try reader.readIntLittle(u32);
+            .directory_entry_count = try reader.readIntLittle(u16),
+            .directory_size = try reader.readIntLittle(u32),
+            .directory_offset = try reader.readIntLittle(u32),
 
-        self.comment_length = try reader.readIntLittle(u16);
+            .comment_length = try reader.readIntLittle(u16),
+        };
     }
 };
 
-pub fn Parser(comptime Reader: type) type {
-    const BufferedReader = std.io.BufferedReader(8192, Reader);
-    // const ReadError = Reader.Error;
+pub const ArchiveInfo = struct {
+    is_zip64: bool,
+    ecd: EndCentralDirectoryRecord,
+    ecd64: EndCentralDirectory64Record,
+    start_offset: u64,
+    directory_offset: u64,
+    num_entries: u32,
+};
 
-    const ReaderContext = std.meta.fieldInfo(Reader, .context).field_type;
-    const isSeekable = @hasDecl(ReaderContext, "seekBy") and @hasDecl(ReaderContext, "seekTo") and @hasDecl(ReaderContext, "getEndPos");
+fn ReadArchiveInfoError(comptime Reader: type) type {
+    return Reader.Error || Seeker(Reader).Context.SeekError || error{ EndOfStream, FileTooSmall, InvalidZip, InvalidZip64Locator, MultidiskUnsupported, TooManyFiles };
+}
+pub fn readArchiveInfo(reader: anytype) ReadArchiveInfoError(@TypeOf(reader))!ArchiveInfo {
+    const file_length = try reader.context.getEndPos();
+    const minimum_ecdr_offset: u64 = EndCentralDirectoryRecord.size + 4;
+    const maximum_ecdr_offset: u64 = EndCentralDirectoryRecord.size + 4 + 0xffff;
 
-    if (!isSeekable) @compileError("Reader must wrap a seekable context");
+    if (file_length < minimum_ecdr_offset) return error.FileTooSmall;
 
-    return struct {
-        const Self = @This();
+    // Find the ECDR signature with a broad pass.
+    var pos = file_length - minimum_ecdr_offset;
+    var last_pos = if (maximum_ecdr_offset > file_length) file_length else file_length - maximum_ecdr_offset;
+    var buffer: [4096]u8 = undefined;
 
-        allocator: *std.mem.Allocator,
+    find: while (pos > 0) {
+        try reader.context.seekTo(pos);
 
-        reader: Reader,
+        const read = try reader.readAll(&buffer);
+        if (read == 0) return error.InvalidZip;
 
-        is_zip64: bool = false,
-        ecd: EndCentralDirectoryRecord = undefined,
-        ecd64: EndCentralDirectory64Record = undefined,
+        var i: usize = 0;
+        while (i < read - 4) : (i += 1) {
+            if (std.mem.readIntLittle(u32, buffer[i..][0..4]) == EndCentralDirectoryRecord.Signature) {
+                pos = pos + i;
+                try reader.context.seekTo(pos + 4);
 
-        directory: std.ArrayListUnmanaged(CentralDirectoryHeader) = .{},
-        filename_buffer: std.ArrayListUnmanaged(u8) = .{},
-
-        start_offset: u64 = 0,
-        directory_offset: u64 = 0,
-        num_entries: u32 = 0,
-
-        pub fn init(allocator: *std.mem.Allocator, reader: Reader) Self {
-            return .{
-                .allocator = allocator,
-                .reader = reader,
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            self.directory.deinit(self.allocator);
-            self.filename_buffer.deinit(self.allocator);
-        }
-
-        /// Finds and read's the ZIP central directory and local headers.
-        pub const LoadError = SearchError || ReadDirectoryError;
-        pub fn load(self: *Self) LoadError!void {
-            try self.search();
-            try self.readDirectory();
-        }
-
-        const SearchError = Reader.Error || ReaderContext.SeekError || error{ EndOfStream, FileTooSmall, InvalidZip, InvalidZip64Locator, MultidiskUnsupported, TooManyFiles };
-        fn search(self: *Self) SearchError!void {
-            const file_length = try self.reader.context.getEndPos();
-            const minimum_ecdr_offset: u64 = EndCentralDirectoryRecord.size + 4;
-            const maximum_ecdr_offset: u64 = EndCentralDirectoryRecord.size + 4 + 0xffff;
-
-            if (file_length < minimum_ecdr_offset) return error.FileTooSmall;
-
-            // Find the ECDR signature with a broad pass.
-            var pos = file_length - minimum_ecdr_offset;
-            var last_pos = if (maximum_ecdr_offset > file_length) file_length else file_length - maximum_ecdr_offset;
-            var buffer: [4096]u8 = undefined;
-
-            find: while (pos > 0) {
-                try self.reader.context.seekTo(pos);
-
-                const read = try self.reader.readAll(&buffer);
-                if (read == 0) return error.InvalidZip;
-
-                var i: usize = 0;
-                while (i < read - 4) : (i += 1) {
-                    if (std.mem.readIntLittle(u32, buffer[i..][0..4]) == EndCentralDirectoryRecord.Signature) {
-                        pos = pos + i;
-                        try self.reader.context.seekTo(pos + 4);
-
-                        break :find;
-                    }
-                }
-
-                if (pos < 4096 or pos < last_pos) return error.InvalidZip;
-                pos -= 4096;
-            }
-
-            try self.ecd.parse(self.reader);
-
-            if (pos > EndCentralDirectory64Locator.size + EndCentralDirectory64Record.size + 8) {
-                const locator_pos = pos - EndCentralDirectory64Locator.size - 4;
-                try self.reader.context.seekTo(locator_pos);
-
-                var locator: EndCentralDirectory64Locator = undefined;
-
-                const locator_sig = try self.reader.readIntLittle(u32);
-                if (locator_sig == EndCentralDirectory64Locator.Signature) {
-                    try locator.parse(self.reader);
-
-                    if (locator.directory_offset > file_length - EndCentralDirectory64Record.size - 4) return error.InvalidZip64Locator;
-
-                    try self.reader.context.seekTo(locator.directory_offset);
-
-                    const ecd64_sig = try self.reader.readIntLittle(u32);
-                    if (ecd64_sig == EndCentralDirectory64Record.Signature) {
-                        try self.ecd64.parse(self.reader);
-
-                        self.is_zip64 = true;
-                    }
-                }
-            }
-
-            self.num_entries = self.ecd.directory_entry_count;
-            self.directory_offset = self.ecd.directory_offset;
-            var directory_size: u64 = self.ecd.directory_size;
-
-            if (self.ecd.disk_number != self.ecd.disk_start_directory) return error.MultidiskUnsupported;
-            if (self.ecd.disk_directory_entries != self.ecd.directory_entry_count) return error.MultidiskUnsupported;
-
-            // Sanity checks
-            if (self.is_zip64) {
-                if (self.ecd64.disk_number != self.ecd64.disk_start_directory) return error.MultidiskUnsupported;
-                if (self.ecd64.disk_directory_entries != self.ecd64.directory_entry_count) return error.MultidiskUnsupported;
-
-                if (self.ecd64.directory_entry_count > std.math.maxInt(u32)) return error.TooManyFiles;
-                self.num_entries = @truncate(u32, self.ecd64.directory_entry_count);
-
-                self.directory_offset = self.ecd64.directory_offset;
-                directory_size = self.ecd64.directory_size;
-            }
-
-            // Gets the start of the actual ZIP.
-            // This is required because ZIPs can have preambles for self-execution, for example
-            // so they could actually start anywhere in the file.
-            self.start_offset = pos - self.ecd.directory_size - self.directory_offset;
-        }
-
-        fn centralHeaderLessThan(_: void, lhs: CentralDirectoryHeader, rhs: CentralDirectoryHeader) bool {
-            return lhs.offset < rhs.offset;
-        }
-
-        const ReadDirectoryError = std.mem.Allocator.Error || Reader.Error || ReaderContext.SeekError || CentralDirectoryHeader.ReadInitialError || CentralDirectoryHeader.ReadSecondaryError || CentralDirectoryHeader.ReadLocalError || error{ EndOfStream, MalformedCentralDirectoryHeader };
-        fn readDirectory(self: *Self) ReadDirectoryError!void {
-            try self.directory.ensureTotalCapacity(self.allocator, self.num_entries);
-
-            var index: u32 = 0;
-            try self.seekTo(self.start_offset + self.directory_offset);
-
-            var buffered = BufferedReader{ .unbuffered_reader = self.reader };
-            const reader = buffered.reader();
-
-            var filename_len_total: usize = 0;
-            while (index < self.num_entries) : (index += 1) {
-                const sig = try reader.readIntLittle(u32);
-                if (sig != CentralDirectoryHeader.Signature) return error.MalformedCentralDirectoryHeader;
-
-                var hdr = self.directory.addOneAssumeCapacity();
-                try hdr.readInitial(self, reader);
-
-                filename_len_total += hdr.filename_len;
-            }
-
-            try self.filename_buffer.ensureTotalCapacity(self.allocator, filename_len_total);
-
-            try self.bufferedSeekTo(reader.context, self.start_offset + self.directory_offset);
-
-            for (self.directory.items) |*hdr| {
-                try hdr.readSecondary(self, reader);
-            }
-
-            std.sort.sort(CentralDirectoryHeader, self.directory.items, {}, centralHeaderLessThan);
-
-            for (self.directory.items) |*hdr| {
-                try hdr.readLocal(self, reader);
+                break :find;
             }
         }
 
-        pub fn getFileIndex(self: Self, filename: []const u8) !usize {
-            for (self.directory.items) |*hdr, i| {
-                if (std.mem.eql(u8, hdr.filename, filename)) {
-                    return i;
-                }
-            }
+        if (pos < 4096 or pos < last_pos) return error.InvalidZip;
+        pos -= 4096;
+    }
 
-            return error.FileNotFound;
+    const ecd = try EndCentralDirectoryRecord.read(reader);
+
+    var is_zip64 = false;
+    var ecd64: EndCentralDirectory64Record = undefined;
+    if (pos > EndCentralDirectory64Locator.size + EndCentralDirectory64Record.size + 8) {
+        const locator_pos = pos - EndCentralDirectory64Locator.size - 4;
+        try reader.context.seekTo(locator_pos);
+
+        const locator_sig = try reader.readIntLittle(u32);
+        if (locator_sig == EndCentralDirectory64Locator.Signature) {
+            const locator = try EndCentralDirectory64Locator.read(reader);
+
+            if (locator.directory_offset > file_length - EndCentralDirectory64Record.size - 4) return error.InvalidZip64Locator;
+
+            try reader.context.seekTo(locator.directory_offset);
+
+            const ecd64_sig = try reader.readIntLittle(u32);
+            if (ecd64_sig == EndCentralDirectory64Record.Signature) {
+                ecd64 = try EndCentralDirectory64Record.read(reader);
+                is_zip64 = true;
+            }
+        }
+    }
+
+    var num_entries: u32 = ecd.directory_entry_count;
+    var directory_offset: u64 = ecd.directory_offset;
+    var directory_size: u64 = ecd.directory_size;
+
+    if (ecd.disk_number != ecd.disk_start_directory) return error.MultidiskUnsupported;
+    if (ecd.disk_directory_entries != ecd.directory_entry_count) return error.MultidiskUnsupported;
+
+    // Sanity checks
+    if (is_zip64) {
+        if (ecd64.disk_number != ecd64.disk_start_directory) return error.MultidiskUnsupported;
+        if (ecd64.disk_directory_entries != ecd64.directory_entry_count) return error.MultidiskUnsupported;
+
+        if (ecd64.directory_entry_count > std.math.maxInt(u32)) return error.TooManyFiles;
+        num_entries = @truncate(u32, ecd64.directory_entry_count);
+
+        directory_offset = ecd64.directory_offset;
+        directory_size = ecd64.directory_size;
+    }
+
+    // Gets the start of the actual ZIP.
+    // This is required because ZIPs can have preambles for self-execution, for example
+    // so they could actually start anywhere in the file.
+    const start_offset = pos - ecd.directory_size - directory_offset;
+
+    return ArchiveInfo {
+        .is_zip64 = is_zip64,
+        .ecd = ecd,
+        .ecd64 = ecd64,
+        .num_entries = num_entries,
+        .directory_offset = directory_offset,
+        .start_offset = start_offset,
+    };
+}
+
+pub const FileInfo = struct {
+    start_offset: u64,
+    headers: std.ArrayListUnmanaged(CentralDirectoryHeader),
+    filename_buffer: []u8,
+
+    pub fn deinit(self: *FileInfo, allocator: *std.mem.Allocator) void {
+        self.headers.deinit(allocator);
+        allocator.free(self.filename_buffer);
+    }
+
+    /// Returns a file tree of this ZIP archive.
+    /// Useful for plucking specific files out of a ZIP or listing it's contents.
+    pub fn getFileTree(self: FileInfo, allocator: *std.mem.Allocator) !FileTree {
+        var tree = FileTree{};
+        try tree.entries.ensureTotalCapacity(allocator, @intCast(u32, self.headers.items.len));
+
+        for (self.headers.items) |*hdr| {
+            try tree.appendFile(self.allocator, hdr);
         }
 
-        pub fn readFileAlloc(self: Self, allocator: *std.mem.Allocator, index: usize) ![]const u8 {
-            const header = self.directory.items[index];
+        return tree;
+    }
 
-            try self.seekTo(self.start_offset + header.local_header.offset);
-
-            var buffer = try allocator.alloc(u8, header.uncompressed_size);
-            errdefer allocator.free(buffer);
-
-            var read_buffered = BufferedReader{ .unbuffered_reader = self.reader };
-            var limited_reader = utils.LimitedReader(BufferedReader.Reader).init(read_buffered.reader(), header.compressed_size);
-            const reader = limited_reader.reader();
-
-            var write_stream = std.io.fixedBufferStream(buffer);
-            const writer = write_stream.writer();
-
-            var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
-
-            switch (header.compression) {
-                .none => {
-                    try fifo.pump(reader, writer);
-                },
-                .deflated => {
-                    var window: [0x8000]u8 = undefined;
-                    var stream = std.compress.deflate.inflateStream(reader, &window);
-
-                    try fifo.pump(stream.reader(), writer);
-                },
-                else => return error.CompressionUnsupported,
+    pub fn getFileIndex(self: FileInfo, filename: []const u8) error{FileNotFound}!usize {
+        for (self.headers.items) |*hdr, i| {
+            if (std.mem.eql(u8, hdr.filename, filename)) {
+                return i;
             }
+        }
+        return error.FileNotFound;
+    }
 
-            return buffer;
+    pub fn readFileAlloc(self: FileInfo, full_reader: anytype, allocator: *std.mem.Allocator, index: usize) ![]const u8 {
+        const header = self.headers.items[index];
+
+        try self.seekTo(self.start_offset + header.local_header.offset);
+
+        var buffer = try allocator.alloc(u8, header.uncompressed_size);
+        errdefer allocator.free(buffer);
+
+        var read_buffered = Seeker.T { .unbuffered_reader = full_reader };
+        var limited_reader = utils.LimitedReader(Seeker.Reader).init(read_buffered.reader(), header.compressed_size);
+        const reader = limited_reader.reader();
+
+        var write_stream = std.io.fixedBufferStream(buffer);
+        const writer = write_stream.writer();
+
+        var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
+
+        switch (header.compression) {
+            .none => {
+                try fifo.pump(reader, writer);
+            },
+            .deflated => {
+                var window: [0x8000]u8 = undefined;
+                var stream = std.compress.deflate.inflateStream(reader, &window);
+
+                try fifo.pump(stream.reader(), writer);
+            },
+            else => return error.CompressionUnsupported,
         }
 
-        pub const ExtractOptions = struct {
-            skip_components: u16 = 0,
+        return buffer;
+    }
+};
+
+/// Finds and read's the ZIP central directory and local headers.
+pub fn LoadError(comptime Reader: type) type {
+    return ReadArchiveInfoError(Reader) || ReadFileInfoError(Reader);
+}
+pub fn load(allocator: *std.mem.Allocator, reader: anytype) LoadError(@TypeOf(reader))!FileInfo {
+    const info = try readArchiveInfo(reader);
+    return try readFileInfo(allocator, reader, info);
+}
+
+fn centralHeaderLessThan(_: void, lhs: CentralDirectoryHeader, rhs: CentralDirectoryHeader) bool {
+    return lhs.offset < rhs.offset;
+}
+
+fn ReadFileInfoError(comptime Reader: type) type {
+    return std.mem.Allocator.Error || Reader.Error || Seeker(Reader).Context.SeekError || CentralDirectoryHeader.ReadSecondaryError || CentralDirectoryHeader.ReadLocalError || error{ EndOfStream, MalformedCentralDirectoryHeader, MultidiskUnsupported };
+}
+pub fn readFileInfo(allocator: *std.mem.Allocator, reader: anytype, info: ArchiveInfo) ReadFileInfoError(@TypeOf(reader))!FileInfo {
+    const Seek = Seeker(@TypeOf(reader));
+
+    var headers = try std.ArrayListUnmanaged(CentralDirectoryHeader).initCapacity(allocator, info.num_entries);
+    errdefer headers.deinit(allocator);
+
+    var index: u32 = 0;
+    try reader.context.seekTo(info.start_offset + info.directory_offset);
+
+    var buffered = Seek.BufferedReader { .unbuffered_reader = reader };
+    const buffered_reader = buffered.reader();
+
+    var filename_len_total: usize = 0;
+    while (index < info.num_entries) : (index += 1) {
+        const sig = try buffered_reader.readIntLittle(u32);
+        if (sig != CentralDirectoryHeader.Signature) return error.MalformedCentralDirectoryHeader;
+
+        var hdr = headers.addOneAssumeCapacity();
+        hdr.* = try CentralDirectoryHeader.readInitial(buffered_reader);
+        if (hdr.disk_start != info.ecd.disk_number) return error.MultidiskUnsupported;
+        try Seek.seekBy(reader, buffered_reader.context, @intCast(i64, hdr.filename_len + hdr.extrafield_len + hdr.file_comment_len));
+
+        filename_len_total += hdr.filename_len;
+    }
+
+    var filename_buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, filename_len_total);
+    errdefer filename_buffer.deinit(allocator);
+
+    try Seek.seekTo(reader, buffered_reader.context, info.start_offset + info.directory_offset);
+
+    for (headers.items) |*hdr| {
+        try hdr.readSecondary(reader, buffered_reader, &filename_buffer);
+    }
+
+    std.sort.sort(CentralDirectoryHeader, headers.items, {}, centralHeaderLessThan);
+
+    for (headers.items) |*hdr| {
+        try Seek.seekTo(reader, buffered_reader.context, info.start_offset + hdr.offset);
+        try hdr.readLocal(reader, buffered_reader);
+    }
+    return FileInfo {
+        .start_offset = info.start_offset,
+        .headers = headers,
+        .filename_buffer = filename_buffer.toOwnedSlice(allocator),
+    };
+}
+
+pub const ExtractOptions = struct {
+    skip_components: u16 = 0,
+};
+
+pub fn extract(reader: anytype, file_info: FileInfo, dir: std.fs.Dir, options: ExtractOptions) !usize {
+    const Seek = Seeker(@TypeOf(reader));
+
+    var buffered = Seek.BufferedReader { .unbuffered_reader = reader };
+    const file_reader = buffered.reader();
+
+    var written: usize = 0;
+
+    extract: for (file_info.headers.items) |hdr| {
+        const new_filename = blk: {
+            var component: usize = 0;
+            var last_pos: usize = 0;
+            while (component < options.skip_components) : (component += 1) {
+                last_pos = std.mem.indexOfPos(u8, hdr.filename, last_pos, "/") orelse continue :extract;
+            }
+
+            if (last_pos + 1 == hdr.filename_len) continue :extract;
+
+            break :blk if (hdr.filename[last_pos] == '/') hdr.filename[last_pos + 1 ..] else hdr.filename[last_pos..];
         };
 
-        pub fn extract(self: Self, dir: std.fs.Dir, options: ExtractOptions) !usize {
-            var buffered = BufferedReader{ .unbuffered_reader = self.reader };
-            const file_reader = buffered.reader();
-
-            var written: usize = 0;
-
-            extract: for (self.directory.items) |hdr| {
-                const new_filename = blk: {
-                    var component: usize = 0;
-                    var last_pos: usize = 0;
-                    while (component < options.skip_components) : (component += 1) {
-                        last_pos = std.mem.indexOfPos(u8, hdr.filename, last_pos, "/") orelse continue :extract;
-                    }
-
-                    if (last_pos + 1 == hdr.filename_len) continue :extract;
-
-                    break :blk if (hdr.filename[last_pos] == '/') hdr.filename[last_pos + 1 ..] else hdr.filename[last_pos..];
-                };
-
-                if (std.fs.path.dirnamePosix(new_filename)) |dirname| {
-                    try dir.makePath(dirname);
-                }
-
-                if (new_filename[new_filename.len - 1] == '/') continue;
-
-                const fd = try dir.createFile(new_filename, .{});
-                defer fd.close();
-
-                try self.bufferedSeekTo(file_reader.context, self.start_offset + hdr.local_header.offset);
-
-                var limited_reader = utils.LimitedReader(BufferedReader.Reader).init(file_reader, hdr.compressed_size);
-                const reader = limited_reader.reader();
-
-                var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
-
-                written += hdr.uncompressed_size;
-
-                switch (hdr.compression) {
-                    .none => {
-                        try fifo.pump(reader, fd.writer());
-                    },
-                    .deflated => {
-                        var window: [0x8000]u8 = undefined;
-                        var stream = std.compress.deflate.inflateStream(reader, &window);
-
-                        try fifo.pump(stream.reader(), fd.writer());
-                    },
-                    else => return error.CompressionUnsupported,
-                }
-            }
-
-            return written;
+        if (std.fs.path.dirnamePosix(new_filename)) |dirname| {
+            try dir.makePath(dirname);
         }
 
-        /// Returns a file tree of this ZIP archive.
-        /// Useful for plucking specific files out of a ZIP or listing it's contents.
-        pub fn getFileTree(self: Self) !FileTree {
-            var tree = FileTree{};
-            try tree.entries.ensureTotalCapacity(self.allocator, @intCast(u32, self.directory.items.len));
+        if (new_filename[new_filename.len - 1] == '/') continue;
 
-            for (self.directory.items) |*hdr| {
-                try tree.appendFile(self.allocator, hdr);
-            }
+        const fd = try dir.createFile(new_filename, .{});
+        defer fd.close();
 
-            return tree;
+        try Seek.seekTo(reader, file_reader.context, file_info.start_offset + hdr.local_header.offset);
+
+        var limited = utils.LimitedReader(Seek.BufferedReader.Reader).init(file_reader, hdr.compressed_size);
+        const limited_reader = limited.reader();
+
+        var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
+
+        written += hdr.uncompressed_size;
+
+        switch (hdr.compression) {
+            .none => {
+                try fifo.pump(limited_reader, fd.writer());
+            },
+            .deflated => {
+                var window: [0x8000]u8 = undefined;
+                var stream = std.compress.deflate.inflateStream(limited_reader, &window);
+
+                try fifo.pump(stream.reader(), fd.writer());
+            },
+            else => return error.CompressionUnsupported,
+        }
+    }
+
+    return written;
+}
+
+fn readFilename(filename_buffer: *std.ArrayListUnmanaged(u8), reader: anytype, len: usize) ![]const u8 {
+    const prev_len = filename_buffer.items.len;
+    filename_buffer.items.len += len;
+
+    const buf = filename_buffer.items[prev_len..][0..len];
+    // TODO: is it an error if the length read does not equal len?
+    _ = try reader.readAll(buf);
+
+    return buf;
+}
+
+pub fn Seeker(comptime Reader: type) type {
+    return struct {
+        pub const Context = std.meta.fieldInfo(Reader, .context).field_type;
+        comptime {
+            const is_seekable = @hasDecl(Context, "seekBy") and @hasDecl(Context, "seekTo") and @hasDecl(Context, "getEndPos");
+            if (!is_seekable) @compileError("Reader must wrap a seekable context");
         }
 
-        fn readFilename(self: *Self, reader: anytype, len: usize) ![]const u8 {
-            const prev_len = self.filename_buffer.items.len;
-            self.filename_buffer.items.len += len;
+        pub const BufferedReader = std.io.BufferedReader(8192, Reader);
 
-            const buf = self.filename_buffer.items[prev_len..][0..len];
-            _ = try reader.readAll(buf);
-
-            return buf;
+        pub fn getPos(reader: Reader, buffered: *BufferedReader) !u64 {
+            const pos = try reader.context.getPos();
+            return pos - buffered.fifo.count;
         }
-
-        fn seekTo(self: Self, offset: u64) !void {
-            try self.reader.context.seekTo(offset);
+        pub fn seekTo(reader: Reader, buffered: *BufferedReader, pos: u64) !void {
+            const offset = @intCast(i64, pos) - @intCast(i64, try getPos(reader, buffered));
+            try seekBy(reader, buffered, offset);
         }
-
-        fn seekBy(self: Self, offset: i64) !void {
-            try self.reader.context.seekBy(offset);
-        }
-
-        fn bufferedSeekBy(self: Self, buffered: *BufferedReader, offset: i64) !void {
+        pub fn seekBy(reader: Reader, buffered: *BufferedReader, offset: i64) !void {
             if (offset == 0) return;
 
             if (offset > 0) {
@@ -792,26 +836,14 @@ pub fn Parser(comptime Reader: type) type {
                     const left = u_offset - buffered.fifo.count;
 
                     buffered.fifo.discard(buffered.fifo.count);
-                    try self.seekBy(@intCast(i64, left));
+                    try reader.context.seekBy(@intCast(i64, left));
                 }
             } else {
                 const left = offset - @intCast(i64, buffered.fifo.count);
 
                 buffered.fifo.discard(buffered.fifo.count);
-                try self.seekBy(left);
+                try reader.context.seekBy(left);
             }
-        }
-
-        fn bufferedGetPos(self: Self, buffered: *BufferedReader) !u64 {
-            const pos = try self.reader.context.getPos();
-
-            return pos - buffered.fifo.count;
-        }
-
-        fn bufferedSeekTo(self: Self, buffered: *BufferedReader, pos: u64) !void {
-            const offset = @intCast(i64, pos) - @intCast(i64, try self.bufferedGetPos(buffered));
-
-            try self.bufferedSeekBy(buffered, offset);
         }
     };
 }
