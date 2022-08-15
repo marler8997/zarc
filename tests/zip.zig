@@ -43,13 +43,11 @@ pub fn main() !void {
 
         const size = try archive_file.getEndPos();
 
-        var timer = try std.time.Timer.start();
-        var archive = zarc.zip.Parser(std.fs.File.Reader).init(allocator, archive_file.reader());
-        defer archive.deinit();
-
         try writer.print("File: {s}\n", .{entry.name});
-
-        try archive.load();
+        var timer = try std.time.Timer.start();
+        const archive = try zarc.zip.readArchiveInfo(archive_file.reader());
+        var file_info = try zarc.zip.readFileInfo(allocator, archive_file.reader(), archive);
+        defer file_info.deinit(allocator);
         const time = timer.read();
 
         const load_time = @intToFloat(f64, time) / 1e9;
