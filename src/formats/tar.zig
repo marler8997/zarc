@@ -122,15 +122,15 @@ pub const Header = struct {
     longlink: ?[]const u8 = null,
 
     pub fn asOld(self: Header) *const OldHeader {
-        return @ptrCast(*const OldHeader, &self.buffer);
+        return @ptrCast(&self.buffer);
     }
 
     pub fn asUstar(self: Header) *const UstarHeader {
-        return @ptrCast(*const UstarHeader, &self.buffer);
+        return @ptrCast(&self.buffer);
     }
 
     pub fn asGnu(self: Header) *const GnuHeader {
-        return @ptrCast(*const GnuHeader, &self.buffer);
+        return @ptrCast(&self.buffer);
     }
 
     pub fn isUstar(self: Header) bool {
@@ -205,7 +205,7 @@ pub const Header = struct {
         }
 
         const total_data_len = try header.alignedEntrySize();
-        try parser.file.seekBy(@intCast(i64, total_data_len));
+        try parser.file.seekBy(@intCast(total_data_len));
 
         return total_data_len + 512;
     }
@@ -226,7 +226,7 @@ pub const Header = struct {
                 parser.last_longname = truncate(try parser.readString(reader, size));
                 parser.reuse_last_entry = true;
 
-                try parser.file.seekBy(@intCast(i64, total_data_len - size));
+                try parser.file.seekBy(@intCast(total_data_len - size));
             },
             .gnu_longlink => {
                 const size = try self.entrySize();
@@ -234,7 +234,7 @@ pub const Header = struct {
                 parser.last_longlink = truncate(try parser.readString(reader, size));
                 parser.reuse_last_entry = true;
 
-                try parser.file.seekBy(@intCast(i64, total_data_len - size));
+                try parser.file.seekBy(@intCast(total_data_len - size));
             },
             else => {
                 if (parser.last_longname) |name| {
@@ -253,7 +253,7 @@ pub const Header = struct {
                     self.longlink = null;
                 }
 
-                try parser.file.seekBy(@intCast(i64, total_data_len));
+                try parser.file.seekBy(@intCast(total_data_len));
             },
         }
 
@@ -334,14 +334,14 @@ pub const Parser = struct {
         const prev_len = self.string_buffer.items.len;
         self.string_buffer.items.len += len;
 
-        var buf = self.string_buffer.items[prev_len..][0..len];
+        const buf = self.string_buffer.items[prev_len..][0..len];
         _ = try reader.readAll(buf);
 
         return buf;
     }
 
     pub fn getFileIndex(self: Parser, filename: []const u8) !usize {
-        for (self.directory.items) |*hdr, i| {
+        for (self.directory.items, 0..) |*hdr, i| {
             if (std.mem.eql(u8, hdr.filename, filename)) {
                 return i;
             }
@@ -355,7 +355,7 @@ pub const Parser = struct {
 
         try self.seekTo(self.start_offset + header.local_header.offset);
 
-        var buffer = try allocator.alloc(header.uncompressed_size);
+        const buffer = try allocator.alloc(header.uncompressed_size);
         errdefer allocator.free(buffer);
 
         var read_buffered = std.io.BufferedReader(8192, std.fs.File.Reader){ .unbuffered_reader = self.reader };

@@ -27,15 +27,15 @@ pub const CompressionMethod = enum(u16) {
     aex_encryption,
 
     pub fn read(self: *CompressionMethod, reader: anytype) !void {
-        const data = try reader.readIntLittle(u16);
+        const data = try reader.readInt(u16, .little);
 
-        self.* = @intToEnum(CompressionMethod, data);
+        self.* = @enumFromInt(data);
     }
 
     pub fn write(self: CompressionMethod, writer: anytype) !void {
-        const data = @enumToInt(self);
+        const data = @intFromEnum(self);
 
-        try writer.writeIntLittle(u16, data);
+        try writer.writeInt(u16, data, .little);
     }
 };
 
@@ -69,17 +69,17 @@ pub const Version = struct {
     minor: u8,
 
     pub fn read(self: *Version, reader: anytype) !void {
-        const data = try reader.readIntLittle(u16);
+        const data = try reader.readInt(u16, .little);
 
-        self.major = @truncate(u8, data) / 10;
-        self.minor = @truncate(u8, data) % 10;
-        self.vendor = @intToEnum(Vendor, @truncate(u8, data >> 8));
+        self.major = @as(u8, @truncate(data)) / 10;
+        self.minor = @as(u8, @truncate(data)) % 10;
+        self.vendor = @enumFromInt(@as(u8, @truncate(data >> 8)));
     }
 
     pub fn write(self: Version, writer: anytype) !void {
         const version = @as(u16, self.major * 10 + self.minor);
-        const vendor = @as(u16, @enumToInt(self.vendor)) << 8;
-        try writer.writeIntLittle(u16, version | vendor);
+        const vendor = @as(u16, @intFromEnum(self.vendor)) << 8;
+        try writer.writeInt(u16, version | vendor, .little);
     }
 };
 
@@ -102,15 +102,15 @@ pub const GeneralPurposeBitFlag = packed struct {
     __15_reserved: u1,
 
     pub fn read(self: *GeneralPurposeBitFlag, reader: anytype) !void {
-        const data = try reader.readIntLittle(u16);
+        const data = try reader.readInt(u16, .little);
 
-        self.* = @bitCast(GeneralPurposeBitFlag, data);
+        self.* = @bitCast(data);
     }
 
     pub fn write(self: GeneralPurposeBitFlag, writer: anytype) !void {
-        const data = @bitCast(u16, self);
+        const data: u16 = @bitCast(self);
 
-        try writer.writeIntLittle(u16, data);
+        try writer.writeInt(u16, data, .little);
     }
 };
 
@@ -122,15 +122,15 @@ pub const InternalAttributes = packed struct {
     __8_15_reserved: u8,
 
     pub fn read(self: *InternalAttributes, reader: anytype) !void {
-        const data = try reader.readIntLittle(u16);
+        const data = try reader.readInt(u16, .little);
 
-        self.* = @bitCast(GeneralPurposeBitFlag, data);
+        self.* = @bitCast(data);
     }
 
     pub fn write(self: InternalAttributes, writer: anytype) !void {
-        const data = @bitCast(u16, self);
+        const data: u16 = @bitCast(self);
 
-        try writer.writeIntLittle(u16, data);
+        try writer.writeInt(u16, data, .little);
     }
 };
 
@@ -143,31 +143,31 @@ pub const DosTimestamp = struct {
     year: u12,
 
     pub fn read(self: *DosTimestamp, reader: anytype) !void {
-        const time = try reader.readIntLittle(u16);
+        const time = try reader.readInt(u16, .little);
 
-        self.second = @as(u6, @truncate(u5, time)) << 1;
-        self.minute = @truncate(u6, time >> 5);
-        self.hour = @truncate(u5, time >> 11);
+        self.second = @as(u6, @as(u5, @truncate(time))) << 1;
+        self.minute = @truncate(time >> 5);
+        self.hour = @truncate(time >> 11);
 
-        const date = try reader.readIntLittle(u16);
+        const date: u16 = try reader.readInt(u16, .little);
 
-        self.day = @truncate(u5, date);
-        self.month = @truncate(u4, date >> 5);
-        self.year = @as(u12, @truncate(u7, date >> 9)) + 1980;
+        self.day = @truncate(date);
+        self.month = @truncate(date >> 5);
+        self.year = @as(u12, @as(u7, @truncate(date >> 9))) + 1980;
     }
 
     pub fn write(self: DosTimestamp, writer: anytype) !void {
-        const second = @as(u16, @truncate(u5, self.second >> 1));
-        const minute = @as(u16, @truncate(u5, self.minute) << 5);
-        const hour = @as(u16, @truncate(u5, self.hour) << 11);
+        const second: u16 = @as(u5, @truncate(self.second >> 1));
+        const minute: u16 = @as(u16, @as(u5, @truncate(self.minute))) << 5;
+        const hour: u16 = @as(u16, @as(u5, @truncate(self.hour))) << 11;
 
-        try writer.writeIntLittle(u16, second | minute | hour);
+        try writer.writeInt(u16, second | minute | hour, .little);
 
         const day = self.day;
         const month = self.month << 5;
         const year = (self.year - 1980) << 11;
 
-        try writer.writeIntLittle(u16, day | month | year);
+        try writer.writeInt(u16, day | month | year, .little);
     }
 };
 
@@ -201,37 +201,40 @@ pub const LocalFileHeader = struct {
         try self.compression.read(reader);
         try self.mtime.read(reader);
 
-        self.checksum = try reader.readIntLittle(u32);
-        self.compressed_size = try reader.readIntLittle(u32);
-        self.uncompressed_size = try reader.readIntLittle(u32);
+        self.checksum = try reader.readInt(u32, .little);
+        self.compressed_size = try reader.readInt(u32, .little);
+        self.uncompressed_size = try reader.readInt(u32, .little);
 
-        self.filename_len = try reader.readIntLittle(u16);
-        self.extrafield_len = try reader.readIntLittle(u16);
+        self.filename_len = try reader.readInt(u16, .little);
+        self.extrafield_len = try reader.readInt(u16, .little);
 
         self.offset = central_header.offset + 30 + self.filename_len + self.extrafield_len;
 
         self.central_header = central_header;
 
         if (self.filename_len != central_header.filename_len) return error.MalformedLocalFileHeader;
-        try Seek.seekBy(seeker, reader.context, @intCast(i64, self.filename_len));
+        try Seek.seekBy(seeker, reader.context, self.filename_len);
 
-        var is_zip64 = false;
+        const is_zip64 = false;
         var extra_read: u32 = 0;
 
         const needs_uncompressed_size = self.uncompressed_size == 0xFFFFFFFF;
         const needs_compressed_size = self.compressed_size == 0xFFFFFFFF;
 
-        const required_zip64_size = (@as(u5, @boolToInt(needs_uncompressed_size)) + @as(u5, @boolToInt(needs_compressed_size))) * 8;
+        const required_zip64_size = 8 * (
+            @as(u5, @intFromBool(needs_uncompressed_size)) +
+            @as(u5, @intFromBool(needs_compressed_size))
+        );
 
         while (extra_read < self.extrafield_len) {
-            const field_id = try reader.readIntLittle(u16);
-            const field_size = try reader.readIntLittle(u16);
+            const field_id = try reader.readInt(u16, .little);
+            const field_size = try reader.readInt(u16, .little);
             extra_read += 4;
 
             if (field_id == 0x0001) {
                 if (field_size < required_zip64_size) return error.MalformedExtraField;
-                if (needs_uncompressed_size) self.uncompressed_size = try reader.readIntLittle(u64);
-                if (needs_compressed_size) self.compressed_size = try reader.readIntLittle(u64);
+                if (needs_uncompressed_size) self.uncompressed_size = try reader.readInt(u64, .little);
+                if (needs_compressed_size) self.compressed_size = try reader.readInt(u64, .little);
 
                 extra_read += required_zip64_size;
 
@@ -248,7 +251,7 @@ pub const LocalFileHeader = struct {
         const left = self.extrafield_len - extra_read;
 
         if (self.flags.data_descriptor) {
-            try Seek.seekBy(seeker, reader.context, @intCast(i64, left + self.compressed_size));
+            try Seek.seekBy(seeker, reader.context, @intCast(left + self.compressed_size));
 
             self.data_descriptor = @as(DataDescriptor, undefined);
             try self.data_descriptor.?.read(reader, is_zip64);
@@ -265,27 +268,27 @@ pub const DataDescriptor = struct {
     uncompressed_size: u64,
 
     pub fn read(self: *DataDescriptor, reader: anytype, zip64: bool) !void {
-        const signature = try reader.readIntLittle(u32);
+        const signature = try reader.readInt(u32, .little);
         if (signature == DataDescriptor.Signature) {
             if (zip64) {
-                self.checksum = try reader.readIntLittle(u64);
-                self.compressed_size = try reader.readIntLittle(u64);
-                self.uncompressed_size = try reader.readIntLittle(u64);
+                self.checksum = try reader.readInt(u64, .little);
+                self.compressed_size = try reader.readInt(u64, .little);
+                self.uncompressed_size = try reader.readInt(u64, .little);
             } else {
-                self.checksum = try reader.readIntLittle(u32);
-                self.compressed_size = try reader.readIntLittle(u32);
-                self.uncompressed_size = try reader.readIntLittle(u32);
+                self.checksum = try reader.readInt(u32, .little);
+                self.compressed_size = try reader.readInt(u32, .little);
+                self.uncompressed_size = try reader.readInt(u32, .little);
             }
         } else {
             if (zip64) {
-                const next_u32 = try reader.readIntLittle(u32);
+                const next_u32 = try reader.readInt(u32, .little);
                 self.checksum = @as(u64, next_u32) << 32 | signature;
-                self.compressed_size = try reader.readIntLittle(u64);
-                self.uncompressed_size = try reader.readIntLittle(u64);
+                self.compressed_size = try reader.readInt(u64, .little);
+                self.uncompressed_size = try reader.readInt(u64, .little);
             } else {
                 self.checksum = signature;
-                self.compressed_size = try reader.readIntLittle(u32);
-                self.uncompressed_size = try reader.readIntLittle(u32);
+                self.compressed_size = try reader.readInt(u32, .little);
+                self.uncompressed_size = try reader.readInt(u32, .little);
             }
         }
     }
@@ -326,18 +329,18 @@ pub const CentralDirectoryHeader = struct {
         try self.compression.read(reader);
         try self.mtime.read(reader);
 
-        self.checksum = try reader.readIntLittle(u32);
-        self.compressed_size = try reader.readIntLittle(u32);
-        self.uncompressed_size = try reader.readIntLittle(u32);
+        self.checksum = try reader.readInt(u32, .little);
+        self.compressed_size = try reader.readInt(u32, .little);
+        self.uncompressed_size = try reader.readInt(u32, .little);
 
-        self.filename_len = try reader.readIntLittle(u16);
-        self.extrafield_len = try reader.readIntLittle(u16);
-        self.file_comment_len = try reader.readIntLittle(u16);
+        self.filename_len = try reader.readInt(u16, .little);
+        self.extrafield_len = try reader.readInt(u16, .little);
+        self.file_comment_len = try reader.readInt(u16, .little);
 
-        self.disk_start = try reader.readIntLittle(u16);
+        self.disk_start = try reader.readInt(u16, .little);
         try self.internal_attributes.read(reader);
-        self.external_attributes = try reader.readIntLittle(u32);
-        self.offset = try reader.readIntLittle(u32);
+        self.external_attributes = try reader.readInt(u32, .little);
+        self.offset = try reader.readInt(u32, .little);
     }
 
     const ReadSecondaryError = error{MalformedExtraField};
@@ -348,22 +351,26 @@ pub const CentralDirectoryHeader = struct {
         const needs_compressed_size = self.compressed_size == 0xFFFFFFFF;
         const needs_header_offset = self.offset == 0xFFFFFFFF;
 
-        const required_zip64_size = (@as(u5, @boolToInt(needs_uncompressed_size)) + @as(u5, @boolToInt(needs_compressed_size)) + @as(u5, @boolToInt(needs_header_offset))) * 8;
+        const required_zip64_size = 8 * (
+            @as(u5, @intFromBool(needs_uncompressed_size)) +
+            @as(u5, @intFromBool(needs_compressed_size)) +
+            @as(u5, @intFromBool(needs_header_offset))
+        );
         const needs_zip64 = needs_uncompressed_size or needs_compressed_size or needs_header_offset;
 
         if (needs_zip64) {
             var read: usize = 0;
 
             while (read < self.extrafield_len) {
-                const field_id = try reader.readIntLittle(u16);
-                const field_size = try reader.readIntLittle(u16);
+                const field_id = try reader.readInt(u16, .little);
+                const field_size = try reader.readInt(u16, .little);
                 read += 4;
 
                 if (field_id == 0x0001) {
                     if (field_size < required_zip64_size) return error.MalformedExtraField;
-                    if (needs_uncompressed_size) self.uncompressed_size = try reader.readIntLittle(u64);
-                    if (needs_compressed_size) self.compressed_size = try reader.readIntLittle(u64);
-                    if (needs_header_offset) self.offset = try reader.readIntLittle(u64);
+                    if (needs_uncompressed_size) self.uncompressed_size = try reader.readInt(u64, .little);
+                    if (needs_compressed_size) self.compressed_size = try reader.readInt(u64, .little);
+                    if (needs_header_offset) self.offset = try reader.readInt(u64, .little);
 
                     read += required_zip64_size;
 
@@ -377,9 +384,9 @@ pub const CentralDirectoryHeader = struct {
 
             const left = self.extrafield_len - read;
 
-            try Seek.seekBy(seeker, reader.context, @intCast(i64, self.file_comment_len + left));
+            try Seek.seekBy(seeker, reader.context, @intCast(self.file_comment_len + left));
         } else {
-            try Seek.seekBy(seeker, reader.context, @intCast(i64, self.extrafield_len + self.file_comment_len));
+            try Seek.seekBy(seeker, reader.context, @intCast(self.extrafield_len + self.file_comment_len));
         }
     }
 };
@@ -402,18 +409,18 @@ pub const EndCentralDirectory64Record = struct {
     directory_offset: u64,
 
     pub fn parse(self: *EndCentralDirectory64Record, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.record_size = try reader.readIntLittle(u64);
+        self.record_size = try reader.readInt(u64, .little);
 
         try self.version_made.read(reader);
         try self.version_needed.read(reader);
 
-        self.disk_number = try reader.readIntLittle(u32);
-        self.disk_start_directory = try reader.readIntLittle(u32);
-        self.disk_directory_entries = try reader.readIntLittle(u64);
+        self.disk_number = try reader.readInt(u32, .little);
+        self.disk_start_directory = try reader.readInt(u32, .little);
+        self.disk_directory_entries = try reader.readInt(u64, .little);
 
-        self.directory_entry_count = try reader.readIntLittle(u64);
-        self.directory_size = try reader.readIntLittle(u64);
-        self.directory_offset = try reader.readIntLittle(u64);
+        self.directory_entry_count = try reader.readInt(u64, .little);
+        self.directory_size = try reader.readInt(u64, .little);
+        self.directory_offset = try reader.readInt(u64, .little);
     }
 };
 
@@ -426,9 +433,9 @@ pub const EndCentralDirectory64Locator = struct {
     number_of_disks: u32,
 
     pub fn parse(self: *EndCentralDirectory64Locator, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.directory_disk_number = try reader.readIntLittle(u32);
-        self.directory_offset = try reader.readIntLittle(u64);
-        self.number_of_disks = try reader.readIntLittle(u32);
+        self.directory_disk_number = try reader.readInt(u32, .little);
+        self.directory_offset = try reader.readInt(u64, .little);
+        self.number_of_disks = try reader.readInt(u32, .little);
     }
 };
 
@@ -447,15 +454,15 @@ pub const EndCentralDirectoryRecord = struct {
     comment_length: u16,
 
     pub fn parse(self: *EndCentralDirectoryRecord, reader: anytype) (@TypeOf(reader).Error || error{EndOfStream})!void {
-        self.disk_number = try reader.readIntLittle(u16);
-        self.disk_start_directory = try reader.readIntLittle(u16);
-        self.disk_directory_entries = try reader.readIntLittle(u16);
+        self.disk_number = try reader.readInt(u16, .little);
+        self.disk_start_directory = try reader.readInt(u16, .little);
+        self.disk_directory_entries = try reader.readInt(u16, .little);
 
-        self.directory_entry_count = try reader.readIntLittle(u16);
-        self.directory_size = try reader.readIntLittle(u32);
-        self.directory_offset = try reader.readIntLittle(u32);
+        self.directory_entry_count = try reader.readInt(u16, .little);
+        self.directory_size = try reader.readInt(u32, .little);
+        self.directory_offset = try reader.readInt(u32, .little);
 
-        self.comment_length = try reader.readIntLittle(u16);
+        self.comment_length = try reader.readInt(u16, .little);
     }
 };
 
@@ -463,7 +470,7 @@ pub const EndCentralDirectoryRecord = struct {
 pub fn LoadError(comptime Reader: type) type {
     return ReadInfoError(Reader) || ReadDirectoryError(Reader);
 }
-pub fn load(allocator: *std.mem.Allocator, reader: anytype) LoadError(@TypeOf(reader))!Directory {
+pub fn load(allocator: std.mem.Allocator, reader: anytype) LoadError(@TypeOf(reader))!Directory {
     const info = try readInfo(reader);
     return try readDirectory(allocator, reader, info);
 }
@@ -489,7 +496,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
 
     // Find the ECDR signature with a broad pass.
     var pos = file_length - minimum_ecdr_offset;
-    var last_pos = if (maximum_ecdr_offset > file_length) file_length else file_length - maximum_ecdr_offset;
+    const last_pos = if (maximum_ecdr_offset > file_length) file_length else file_length - maximum_ecdr_offset;
     var buffer: [4096]u8 = undefined;
 
     find: while (pos > 0) {
@@ -500,7 +507,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
 
         var i: usize = 0;
         while (i < read - 4) : (i += 1) {
-            if (std.mem.readIntLittle(u32, buffer[i..][0..4]) == EndCentralDirectoryRecord.Signature) {
+            if (std.mem.readInt(u32, buffer[i..][0..4], .little) == EndCentralDirectoryRecord.Signature) {
                 pos = pos + i;
                 try reader.context.seekTo(pos + 4);
 
@@ -521,7 +528,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
 
         var locator: EndCentralDirectory64Locator = undefined;
 
-        const locator_sig = try reader.readIntLittle(u32);
+        const locator_sig = try reader.readInt(u32, .little);
         if (locator_sig == EndCentralDirectory64Locator.Signature) {
             try locator.parse(reader);
 
@@ -529,7 +536,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
 
             try reader.context.seekTo(locator.directory_offset);
 
-            const ecd64_sig = try reader.readIntLittle(u32);
+            const ecd64_sig = try reader.readInt(u32, .little);
             if (ecd64_sig == EndCentralDirectory64Record.Signature) {
                 try self.ecd64.parse(reader);
 
@@ -551,7 +558,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
         if (self.ecd64.disk_directory_entries != self.ecd64.directory_entry_count) return error.MultidiskUnsupported;
 
         if (self.ecd64.directory_entry_count > std.math.maxInt(u32)) return error.TooManyFiles;
-        self.num_entries = @truncate(u32, self.ecd64.directory_entry_count);
+        self.num_entries = @truncate(self.ecd64.directory_entry_count);
 
         self.directory_offset = self.ecd64.directory_offset;
         directory_size = self.ecd64.directory_size;
@@ -571,7 +578,7 @@ fn centralHeaderLessThan(_: void, lhs: CentralDirectoryHeader, rhs: CentralDirec
 pub fn ReadDirectoryError(comptime Reader: type) type {
     return std.mem.Allocator.Error || Reader.Error || Seeker(Reader).Context.SeekError || CentralDirectoryHeader.ReadSecondaryError || error{ EndOfStream, MalformedCentralDirectoryHeader, MultidiskUnsupported, MalformedLocalFileHeader };
 }
-pub fn readDirectory(allocator: *std.mem.Allocator, reader: anytype, info: Info) ReadDirectoryError(@TypeOf(reader))!Directory {
+pub fn readDirectory(allocator: std.mem.Allocator, reader: anytype, info: Info) ReadDirectoryError(@TypeOf(reader))!Directory {
     const Seek = Seeker(@TypeOf(reader));
 
     var headers = try std.ArrayListUnmanaged(CentralDirectoryHeader).initCapacity(allocator, info.num_entries);
@@ -585,13 +592,13 @@ pub fn readDirectory(allocator: *std.mem.Allocator, reader: anytype, info: Info)
 
     var filename_len_total: usize = 0;
     while (index < info.num_entries) : (index += 1) {
-        const sig = try buffered_reader.readIntLittle(u32);
+        const sig = try buffered_reader.readInt(u32, .little);
         if (sig != CentralDirectoryHeader.Signature) return error.MalformedCentralDirectoryHeader;
 
         var hdr = headers.addOneAssumeCapacity();
         try hdr.readInitial(buffered_reader);
         if (hdr.disk_start != info.ecd.disk_number) return error.MultidiskUnsupported;
-        try Seek.seekBy(reader, buffered_reader.context, @intCast(i64, hdr.filename_len + hdr.extrafield_len + hdr.file_comment_len));
+        try Seek.seekBy(reader, buffered_reader.context, @intCast(hdr.filename_len + hdr.extrafield_len + hdr.file_comment_len));
 
         filename_len_total += hdr.filename_len;
     }
@@ -607,19 +614,19 @@ pub fn readDirectory(allocator: *std.mem.Allocator, reader: anytype, info: Info)
         try hdr.readSecondary(reader, buffered_reader);
     }
 
-    std.sort.sort(CentralDirectoryHeader, headers.items, {}, centralHeaderLessThan);
+    std.sort.heap(CentralDirectoryHeader, headers.items, {}, centralHeaderLessThan);
 
     for (headers.items) |*hdr| {
         try Seek.seekTo(reader, buffered_reader.context, info.start_offset + hdr.offset);
-        const signature = try buffered_reader.readIntLittle(u32);
+        const signature = try buffered_reader.readInt(u32, .little);
         if (signature != LocalFileHeader.Signature) return error.MalformedLocalFileHeader;
         try hdr.local_header.read(hdr, reader, buffered_reader);
     }
 
     return Directory {
         .start_offset = info.start_offset,
-        .headers = headers.toOwnedSlice(allocator),
-        .filename_buffer = filename_buffer.toOwnedSlice(allocator),
+        .headers = try headers.toOwnedSlice(allocator),
+        .filename_buffer = try filename_buffer.toOwnedSlice(allocator),
     };
 }
 
@@ -628,13 +635,13 @@ pub const Directory = struct {
     headers: []CentralDirectoryHeader,
     filename_buffer: []u8,
 
-    pub fn deinit(self: Directory, allocator: *std.mem.Allocator) void {
+    pub fn deinit(self: Directory, allocator: std.mem.Allocator) void {
         allocator.free(self.headers);
         allocator.free(self.filename_buffer);
     }
 
     pub fn getFileIndex(self: Directory, filename: []const u8) !usize {
-        for (self.directory.items) |*hdr, i| {
+        for (self.directory.items, 0..) |*hdr, i| {
             if (std.mem.eql(u8, hdr.filename, filename)) {
                 return i;
             }
@@ -643,13 +650,13 @@ pub const Directory = struct {
         return error.FileNotFound;
     }
 
-    pub fn readFileAlloc(self: Directory, reader: anytype, allocator: *std.mem.Allocator, index: usize) ![]const u8 {
+    pub fn readFileAlloc(self: Directory, reader: anytype, allocator: std.mem.Allocator, index: usize) ![]const u8 {
         const Seek = Seeker(@TypeOf(reader));
         const header = self.headers.items[index];
 
         reader.context.seekTo(self.start_offset + header.local_header.offset);
 
-        var buffer = try allocator.alloc(u8, header.uncompressed_size);
+        const buffer = try allocator.alloc(u8, header.uncompressed_size);
         errdefer allocator.free(buffer);
 
         var read_buffered = Seek.BufferedReader{ .unbuffered_reader = reader };
@@ -716,19 +723,15 @@ pub const Directory = struct {
             var limited = utils.LimitedReader(Seek.BufferedReader.Reader).init(file_reader, hdr.compressed_size);
             const limited_reader = limited.reader();
 
-            var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
-
             written += hdr.uncompressed_size;
 
             switch (hdr.compression) {
                 .none => {
+                    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 8192 }).init();
                     try fifo.pump(limited_reader, fd.writer());
                 },
                 .deflated => {
-                    var window: [0x8000]u8 = undefined;
-                    var stream = std.compress.deflate.inflateStream(limited_reader, &window);
-
-                    try fifo.pump(stream.reader(), fd.writer());
+                    try std.compress.flate.inflate.decompress(.raw, limited_reader, fd.writer());
                 },
                 else => return error.CompressionUnsupported,
             }
@@ -739,9 +742,9 @@ pub const Directory = struct {
 
     /// Returns a file tree of this ZIP archive.
     /// Useful for plucking specific files out of a ZIP or listing it's contents.
-    pub fn getFileTree(self: Directory, allocator: *std.mem.Allocator) !FileTree {
+    pub fn getFileTree(self: Directory, allocator: std.mem.Allocator) !FileTree {
         var tree = FileTree{};
-        try tree.entries.ensureTotalCapacity(allocator, @intCast(u32, self.headers.len));
+        try tree.entries.ensureTotalCapacity(allocator, @intCast(self.headers.len));
         errdefer tree.entries.deinit(allocator);
 
         for (self.headers) |*hdr| {
@@ -756,7 +759,7 @@ fn readFilename(filename_buffer: *std.ArrayListUnmanaged(u8), reader: anytype, l
     const prev_len = filename_buffer.items.len;
     filename_buffer.items.len += len;
 
-    var buf = filename_buffer.items[prev_len..][0..len];
+    const buf = filename_buffer.items[prev_len..][0..len];
     const read = try reader.readAll(buf);
     if (read != len) return error.EndOfStream;
 
@@ -765,7 +768,7 @@ fn readFilename(filename_buffer: *std.ArrayListUnmanaged(u8), reader: anytype, l
 
 fn Seeker(comptime Reader: type) type {
     return struct {
-        pub const Context = std.meta.fieldInfo(Reader, .context).field_type;
+        pub const Context = std.meta.fieldInfo(Reader, .context).type;
         comptime {
             const is_seekable = @hasDecl(Context, "seekBy") and @hasDecl(Context, "seekTo") and @hasDecl(Context, "getEndPos");
             if (!is_seekable) @compileError("Reader must wrap a seekable context");
@@ -775,26 +778,20 @@ fn Seeker(comptime Reader: type) type {
         pub fn seekBy(reader: Reader, buffered: *BufferedReader, offset: i64) !void {
             if (offset == 0) return;
 
+            const buflen = buffered.end - buffered.start;
             if (offset > 0) {
-                const u_offset = @intCast(u64, offset);
+                const u_offset: usize = @intCast(offset);
 
-                if (u_offset <= buffered.fifo.count) {
-                    buffered.fifo.discard(u_offset);
-                } else if (u_offset <= buffered.fifo.count + buffered.fifo.buf.len) {
-                    const left = u_offset - buffered.fifo.count;
+                const buffer_to_skip = @min(buflen, u_offset);
+                buffered.start += buffer_to_skip;
+                const remaining = u_offset - buffer_to_skip;
 
-                    buffered.fifo.discard(buffered.fifo.count);
-                    try buffered.reader().skipBytes(left, .{ .buf_size = 8192 });
-                } else {
-                    const left = u_offset - buffered.fifo.count;
-
-                    buffered.fifo.discard(buffered.fifo.count);
-                    try reader.context.seekBy(@intCast(i64, left));
-                }
+                try reader.context.seekBy(@intCast(remaining));
             } else {
-                const left = offset - @intCast(i64, buffered.fifo.count);
+                const left: i64 = offset - @as(i64, @intCast(buflen));
 
-                buffered.fifo.discard(buffered.fifo.count);
+                buffered.start = 0;
+                buffered.end = 0;
                 try reader.context.seekBy(left);
             }
         }
@@ -802,11 +799,11 @@ fn Seeker(comptime Reader: type) type {
         pub fn getPos(reader: Reader, buffered: *BufferedReader) !u64 {
             const pos = try reader.context.getPos();
 
-            return pos - buffered.fifo.count;
+            return pos - (buffered.end - buffered.start);
         }
 
         pub fn seekTo(reader: Reader, buffered: *BufferedReader, pos: u64) !void {
-            const offset = @intCast(i64, pos) - @intCast(i64, try getPos(reader, buffered));
+            const offset: i64 = @as(i64, @intCast(pos)) - @as(i64, @intCast(try getPos(reader, buffered)));
 
             try seekBy(reader, buffered, offset);
         }
@@ -819,10 +816,10 @@ pub const FileTree = struct {
     entries: std.StringHashMapUnmanaged(*const CentralDirectoryHeader) = .{},
     structure: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(*const CentralDirectoryHeader)) = .{},
 
-    pub fn appendFile(self: *FileTree, allocator: *std.mem.Allocator, hdr: *const CentralDirectoryHeader) !void {
+    pub fn appendFile(self: *FileTree, allocator: std.mem.Allocator, hdr: *const CentralDirectoryHeader) !void {
         // Determines the end of filename. If the filename is a directory, skip the last character as it is an extraenous `/`, else do nothing.
-        var filename_end_index = hdr.filename.len - if (hdr.filename[hdr.filename.len - 1] == '/') @as(usize, 1) else @as(usize, 0);
-        var start = if (std.mem.lastIndexOf(u8, hdr.filename[0..filename_end_index], "/")) |ind|
+        const filename_end_index = hdr.filename.len - if (hdr.filename[hdr.filename.len - 1] == '/') @as(usize, 1) else @as(usize, 0);
+        const start = if (std.mem.lastIndexOf(u8, hdr.filename[0..filename_end_index], "/")) |ind|
             hdr.filename[0..ind]
         else
             "/";
@@ -835,7 +832,7 @@ pub const FileTree = struct {
         try self.entries.put(allocator, hdr.filename, hdr);
     }
 
-    pub fn deinit(self: *FileTree, allocator: *std.mem.Allocator) void {
+    pub fn deinit(self: *FileTree, allocator: std.mem.Allocator) void {
         self.entries.deinit(allocator);
 
         var it = self.structure.valueIterator();

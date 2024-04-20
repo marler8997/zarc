@@ -22,7 +22,19 @@ fn printFileTree(writer: anytype, file_tree: zarc.zip.FileTree) !void {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    var tests_dir = try std.fs.cwd().openDir("tests/zip", .{ .iterate = true });
+    const all_args = try std.process.argsAlloc(allocator);
+    if (all_args.len <= 1) {
+        std.log.err("Usage: zip DIRECTORY", .{});
+        std.process.exit(0xff);
+    }
+    const cmd_args = all_args[1..];
+    const tests_dir_path = cmd_args[0];
+
+    std.log.info("opening tests directory '{s}'", .{tests_dir_path});
+    var tests_dir = std.fs.cwd().openDir(tests_dir_path, .{ .iterate = true }) catch |err| {
+        std.log.err("failed to open tests directory '{s}' with {s}", .{tests_dir_path, @errorName(err)});
+        std.process.exit(0xff);
+    };
     defer tests_dir.close();
 
     var main_extract_dir = try std.fs.cwd().makeOpenPath("tests/extract/zip", .{});
@@ -35,6 +47,7 @@ pub fn main() !void {
 
     var it = tests_dir.iterate();
     while (try it.next()) |entry| {
+        std.log.info("testing '{s}'", .{entry.name});
         var archive_file = try tests_dir.openFile(entry.name, .{});
         defer archive_file.close();
 
@@ -53,8 +66,8 @@ pub fn main() !void {
 
         const time = timer.read();
 
-        const load_time = @intToFloat(f64, time) / 1e9;
-        const read_speed = (@intToFloat(f64, archive.ecd.directory_size) * 2 + @intToFloat(f64, archive.directory_offset)) / load_time;
+        const load_time: f64 = @as(f64, @floatFromInt(time)) / 1e9;
+        const read_speed: f64 = (@as(f64, @floatFromInt(archive.ecd.directory_size)) * 2 + @as(f64, @floatFromInt(archive.directory_offset))) / load_time;
 
         try writer.print("Runtime: {d:.3}ms\n\n", .{load_time * 1e3});
         try writer.print("Speed: {d:.3} MB/s\n", .{read_speed / 1e6});
@@ -65,18 +78,18 @@ pub fn main() !void {
         try writer.print("Entries: {d}\n", .{archive.num_entries});
         try writer.print("ZIP64: {}\n", .{archive.is_zip64});
 
-        // var tree = try archive_dir.getFileTree(allocator);
-        // defer tree.deinit(allocator);
-        // try printFileTree(writer, tree);
+        var tree = try archive_dir.getFileTree(allocator);
+        defer tree.deinit(allocator);
+        try printFileTree(writer, tree);
 
-        // const start = timer.read();
-        // const total_written = try archive_dir.extract(archive_file.reader(), extract_dir, .{ .skip_components = 1 });
-        // const stop = timer.read();
+        const start = timer.read();
+        const total_written = try archive_dir.extract(archive_file.reader(), extract_dir, .{ .skip_components = 1 });
+        const stop = timer.read();
 
-        // const extract_time = @intToFloat(f64, stop - start) / 1e9;
-        // const extract_speed = @intToFloat(f64, total_written) / extract_time;
-        // try writer.print("Extract Size: {d}\n", .{total_written});
-        // try writer.print("Extract Speed: {d:.3} MB/s\n", .{extract_speed / 1e6});
+        const extract_time = @as(f64, @floatFromInt(stop - start)) / 1e9;
+        const extract_speed = @as(f64, @floatFromInt(total_written)) / extract_time;
+        try writer.print("Extract Size: {d}\n", .{total_written});
+        try writer.print("Extract Speed: {d:.3} MB/s\n", .{extract_speed / 1e6});
 
         try writer.writeAll("\n-----\n\n");
     }

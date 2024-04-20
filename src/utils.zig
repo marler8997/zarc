@@ -18,21 +18,21 @@ pub fn readStruct(comptime T: type, instance: *T, reader: anytype, comptime expe
                 if (data.layout == .Packed) {
                     const Int = std.meta.Int(.unsigned, @sizeOf(child) * 8);
 
-                    @field(instance, field.name) = @bitCast(field.field_type, std.mem.readIntLittle(Int, buf[index..][0..@sizeOf(Int)]));
+                    @field(instance, field.name) = @bitCast(std.mem.readInt(Int, buf[index..][0..@sizeOf(Int)], .little));
                     index += @sizeOf(Int);
                 } else {
                     const Int = @typeInfo(@TypeOf(child.read)).Fn.args[0].arg_type.?;
 
-                    @field(instance, field.name) = child.read(std.mem.readIntLittle(Int, buf[index..][0..@sizeOf(Int)]));
+                    @field(instance, field.name) = child.read(std.mem.readInt(Int, buf[index..][0..@sizeOf(Int)], .little));
                     index += @sizeOf(Int);
                 }
             },
             .Enum => |data| {
-                @field(instance, field.name) = @intToEnum(child, std.mem.readIntLittle(data.tag_type, buf[index..][0..@sizeOf(data.tag_type)]));
+                @field(instance, field.name) = @enumFromInt(std.mem.readInt(data.tag_type, buf[index..][0..@sizeOf(data.tag_type)], .little));
                 index += @sizeOf(data.tag_type);
             },
             .Int => {
-                @field(instance, field.name) = std.mem.readIntLittle(child, buf[index..][0..@sizeOf(child)]);
+                @field(instance, field.name) = std.mem.readInt(child, buf[index..][0..@sizeOf(child)], .little);
                 index += @sizeOf(child);
             },
             .Array => |data| {
@@ -69,7 +69,7 @@ pub fn LimitedReader(comptime ReaderType: type) type {
         fn read(self: *Self, dest: []u8) Error!usize {
             if (self.pos >= self.limit) return 0;
 
-            const left = std.math.min(self.limit - self.pos, dest.len);
+            const left = @min(self.limit - self.pos, dest.len);
             const num_read = try self.unlimited_reader.read(dest[0..left]);
 
             self.pos += num_read;
