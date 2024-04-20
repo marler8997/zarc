@@ -520,6 +520,7 @@ pub fn readInfo(reader: anytype) ReadInfoError(@TypeOf(reader))!Info {
     }
 
     var self: Info = undefined;
+    self.is_zip64 = false;
     try self.ecd.parse(reader);
 
     if (pos > EndCentralDirectory64Locator.size + EndCentralDirectory64Record.size + 8) {
