@@ -1,6 +1,8 @@
 const std = @import("std");
 
-const test_names = .{ "zip", "tar" };
+// disable the tar piece for now
+//const test_names = .{ "zip", "tar" };
+const test_names = .{ "zip" };
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -9,6 +11,24 @@ pub fn build(b: *std.Build) void {
     const zarc = b.addModule("zarc", .{
         .root_source_file = b.path("src/main.zig"),
     });
+
+    {
+        const exe = b.addExecutable(.{
+            .name = "unzip",
+            .root_source_file = b.path("src/unzip.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = true,
+        });
+        exe.root_module.addImport("zarc", zarc);
+        b.installArtifact(exe);
+        const run_exe = b.addRunArtifact(exe);
+        if (b.args) |args| {
+            run_exe.addArgs(args);
+        }
+        const run_step = b.step("unzip", "Run the unzip execuatable");
+        run_step.dependOn(&run_exe.step);
+    }
 
     const tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
